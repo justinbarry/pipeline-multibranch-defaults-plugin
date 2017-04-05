@@ -85,9 +85,8 @@ public class DefaultsBinderTest {
         GlobalConfigFiles globalConfigFiles = r.jenkins.getExtensionList(GlobalConfigFiles.class).get(GlobalConfigFiles.class);
         ConfigFileStore store = globalConfigFiles.get();
         Config config = new GroovyScript("Jenkinsfile", "Jenkinsfile", "",
-            "semaphore 'wait'; node {checkout scm; load 'Jenkinsfile'}");
+            "semaphore 'wait'; node {checkout scm;}");
         store.save(config);
-
 
         sampleGitRepo.init();
         sampleGitRepo.write("Jenkinsfile", "echo readFile('file')");

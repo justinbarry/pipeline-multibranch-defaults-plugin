@@ -25,9 +25,21 @@
 package org.jenkinsci.plugins.pipeline.multibranch.defaults;
 
 import hudson.Extension;
+import hudson.Functions;
 import hudson.model.*;
+import hudson.scm.SCM;
+import jenkins.branch.Branch;
 import jenkins.model.Jenkins;
+import jenkins.scm.api.*;
 import org.jenkinsci.lib.configprovider.ConfigProvider;
+import jenkins.scm.api.SCMFileSystem;
+import jenkins.scm.api.SCMHead;
+import jenkins.scm.api.SCMRevision;
+import jenkins.scm.api.SCMRevisionAction;
+import jenkins.scm.api.SCMSource;
+
+import org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition;
+import org.jenkinsci.plugins.workflow.multibranch.BranchJobProperty;
 import org.jenkinsci.lib.configprovider.model.Config;
 import org.jenkinsci.plugins.configfiles.ConfigFileStore;
 import org.jenkinsci.plugins.configfiles.GlobalConfigFiles;
@@ -39,8 +51,12 @@ import org.jenkinsci.plugins.workflow.flow.FlowExecutionOwner;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
 import org.jenkinsci.plugins.workflow.multibranch.WorkflowBranchProjectFactory;
+import org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject;
 
+import java.io.IOException;
 import java.util.List;
+
+
 
 /**
  * Checks out the local default version of {@link WorkflowBranchProjectFactory#SCRIPT} in order if exist:
@@ -50,8 +66,62 @@ import java.util.List;
  */
 class DefaultsBinder extends FlowDefinition {
 
-    @Override
-    public FlowExecution create(FlowExecutionOwner handle, TaskListener listener, List<? extends Action> actions) throws Exception {
+    @Override public FlowExecution create(FlowExecutionOwner handle, TaskListener listener, List<? extends Action> actions) throws Exception {
+        Queue.Executable exec = handle.getExecutable();
+        if (!(exec instanceof WorkflowRun)) {
+            throw new IllegalStateException("inappropriate context");
+        }
+        WorkflowRun build = (WorkflowRun) exec;
+        WorkflowJob job = build.getParent();
+        BranchJobProperty property = job.getProperty(BranchJobProperty.class);
+        if (property == null) {
+            throw new IllegalStateException("inappropriate context");
+        }
+        Branch branch = property.getBranch();
+        ItemGroup<?> parent = job.getParent();
+        if (!(parent instanceof WorkflowMultiBranchProject)) {
+            throw new IllegalStateException("inappropriate context");
+        }
+        SCMSource scmSource = ((WorkflowMultiBranchProject) parent).getSCMSource(branch.getSourceId());
+        if (scmSource == null) {
+            throw new IllegalStateException(branch.getSourceId() + " not found");
+        }
+        SCMHead head = branch.getHead();
+        SCMRevision tip = scmSource.fetch(head, listener);
+        SCM scm;
+        if (tip != null) {
+            build.addAction(new SCMRevisionAction(tip));
+            SCMRevision rev = scmSource.getTrustedRevision(tip, listener);
+            try (SCMFileSystem fs = SCMFileSystem.of(scmSource, head, rev)) {
+                if (fs != null) { // JENKINS-33273
+                    String script = null;
+                    try {
+                        script = fs.child(PipelineBranchDefaultsProjectFactory.SCRIPT).contentAsString();
+                        listener.getLogger().println("Obtained " + PipelineBranchDefaultsProjectFactory.SCRIPT + " from " + rev);
+                    } catch (IOException | InterruptedException x) {
+                        listener.error("Could not do lightweight checkout, falling back to heavyweight").println(Functions.printThrowable(x).trim());
+                    }
+
+                    if (script == null) {
+                        script = getGlobalScript(handle);
+                    }
+
+                    if (script != null) {
+                        return new CpsFlowDefinition(script, true).create(handle, listener, actions);
+                    }
+                }
+            }
+            scm = scmSource.build(head, rev);
+        } else {
+            listener.error("Could not determine exact tip revision of " + branch.getName() + "; falling back to nondeterministic checkout");
+            // Build might fail later anyway, but reason should become clear: for example, branch was deleted before indexing could run.
+            scm = branch.getScm();
+        }
+        return new CpsScmFlowDefinition(scm, PipelineBranchDefaultsProjectFactory.SCRIPT).create(handle, listener, actions);
+    }
+
+
+    public String getGlobalScript(FlowExecutionOwner handle) throws Exception {
         Jenkins jenkins = Jenkins.getInstance();
         if (jenkins == null) {
             throw new IllegalStateException("inappropriate context");
@@ -65,7 +135,7 @@ class DefaultsBinder extends FlowDefinition {
         if (store != null) {
             Config config = store.getById(PipelineBranchDefaultsProjectFactory.SCRIPT);
             if (config != null) {
-                return new CpsFlowDefinition(config.content, false).create(handle, listener, actions);
+                return config.content;
             }
         }
         throw new IllegalArgumentException("Default " + PipelineBranchDefaultsProjectFactory.SCRIPT + " not found. Check configuration.");
