@@ -69,8 +69,7 @@ public class DefaultsBinderTest {
         sampleGitRepo.write("file", "initial content");
         sampleGitRepo.git("commit", "--all", "--message=flow");
         WorkflowMultiBranchProject mp = r.jenkins.createProject(PipelineMultiBranchDefaultsProject.class, "p");
-        mp.getSourcesList().add(new BranchSource(new GitSCMSource(null, sampleGitRepo.toString(), "", "*", "", false),
-            new DefaultBranchPropertyStrategy(new BranchProperty[0])));
+        mp.getSourcesList().add(new BranchSource(new GitSCMSource(null, sampleGitRepo.toString(), "", "*", "", false)));
         WorkflowJob p = PipelineMultiBranchDefaultsProjectTest.scheduleAndFindBranchProject(mp, "master");
         SemaphoreStep.waitForStart("wait/1", null);
         WorkflowRun b1 = p.getLastBuild();
@@ -85,17 +84,15 @@ public class DefaultsBinderTest {
         GlobalConfigFiles globalConfigFiles = r.jenkins.getExtensionList(GlobalConfigFiles.class).get(GlobalConfigFiles.class);
         ConfigFileStore store = globalConfigFiles.get();
         Config config = new GroovyScript("Jenkinsfile", "Jenkinsfile", "",
-            "semaphore 'wait'; node {checkout scm;}");
+            "node {checkout scm;}");
         store.save(config);
-
         sampleGitRepo.init();
-        sampleGitRepo.write("Jenkinsfile", "echo readFile('file')");
+        sampleGitRepo.write("Jenkinsfile", "semaphore 'wait'; node{checkout scm;echo readFile('file');}");
         sampleGitRepo.git("add", "Jenkinsfile");
         sampleGitRepo.write("file", "initial content");
         sampleGitRepo.git("commit", "--all", "--message=flow");
         WorkflowMultiBranchProject mp = r.jenkins.createProject(PipelineMultiBranchDefaultsProject.class, "p");
-        mp.getSourcesList().add(new BranchSource(new GitSCMSource(null, sampleGitRepo.toString(), "", "*", "", false),
-            new DefaultBranchPropertyStrategy(new BranchProperty[0])));
+        mp.getSourcesList().add(new BranchSource(new GitSCMSource(null, sampleGitRepo.toString(), "", "*", "", false)));
         WorkflowJob p = PipelineMultiBranchDefaultsProjectTest.scheduleAndFindBranchProject(mp, "master");
         SemaphoreStep.waitForStart("wait/1", null);
         WorkflowRun b1 = p.getLastBuild();
